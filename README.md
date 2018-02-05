@@ -23,13 +23,13 @@ const graph = [
 const algorithm = new DijkstraTree(graph);
 const result = algorithm.getTree("A");
 
-console.log(expected);
-{
-  "A": 0,
-  "B": 10,
-  "C": 15,
-  "D": 26
-};
+console.log(result);
+// {
+//   "A": 0,
+//   "B": 10,
+//   "C": 15,
+//   "D": 26
+// };
 
 ```
 
