@@ -1,9 +1,9 @@
 {
   "name": "dijkstra-tree",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Implementation of Dijkstra's algorithm that returns a shortest path tree",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "scripts": {
     "test": "mocha --compilers ts:ts-node/register,tsx:ts-node/register 'test/**/*.spec.ts'",
     "prepublishOnly": "tsc -p ./ --outDir dist/"
