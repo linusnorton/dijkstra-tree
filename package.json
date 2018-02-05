@@ -1,0 +1,39 @@
+{
+  "name": "dijkstra-tree",
+  "version": "0.1.0",
+  "description": "Implementation of Dijkstra's algorithm that returns a shortest path tree",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "test": "mocha --compilers ts:ts-node/register,tsx:ts-node/register 'test/**/*.spec.ts'",
+    "prepublishOnly": "tsc -p ./ --outDir dist/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/linusnorton/dijkstra-tree.git"
+  },
+  "keywords": [
+    "dijkstra",
+    "shortest",
+    "path",
+    "tree"
+  ],
+  "author": "Linus Norton",
+  "license": "GPL-3.0",
+  "bugs": {
+    "url": "https://github.com/linusnorton/dijkstra-tree/issues"
+  },
+  "homepage": "https://github.com/linusnorton/dijkstra-tree#readme",
+  "dependencies": {},
+  "engines": {
+    "node": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.1.2",
+    "@types/mocha": "^2.2.47",
+    "chai": "^4.1.2",
+    "mocha": "^3.5.3",
+    "ts-node": "^3.3.0",
+    "typescript": "^2.6.2"
+  }
+}
