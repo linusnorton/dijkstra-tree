@@ -35,9 +35,11 @@ export class DijkstraTree {
       const distance = node === origin ? 0 : Number.MAX_SAFE_INTEGER;
 
       queue.push([node, distance]);
-      distances[node] = distance;
+      distances[node] = {
+        distance,
+        path: [origin]
+      };
     }
-
     // while we have edges left to check
     while (queue.length > 0) {
       // note that the sort is descending (longest first) as pop() is faster than shift()
@@ -49,15 +51,34 @@ export class DijkstraTree {
       // iterate the nodes edges
       for (const edge of this.nodeEdges[current] || []) {
         // see if the new distance is shorter than the one we have
-        const newDistance = Math.min(distances[edge.destination] || Number.MAX_SAFE_INTEGER, distance + edge.distance);
+        const newDistance = Math.min(
+            distances[edge.destination] !== undefined ? distances[edge.destination].distance : Number.MAX_SAFE_INTEGER,
+            distance + edge.distance
+        );
         const indexInQueue = queue.findIndex(queueItem => queueItem[0] === edge.destination);
 
+        /**
+         * Update the tree (distance and paths)
+         *
+         * If newDistance is shorter than previous distance then update it
+         * otherwise if distance exists do nothing if it doesn't exist create it.
+         */
         // update the tree and the queue
-        distances[edge.destination] = newDistance;
+        // If newDistance is shorter than previous distance then update it otherwise do nothing
+        if (distances[edge.destination] && newDistance < distances[edge.destination].distance) {
+          distances[edge.destination] = {
+            distance: newDistance,
+            path: [...distances[edge.origin].path, edge.destination]
+          }
+        } else if (distances[edge.destination] === undefined) { // If edge destination is not stored create it
+          distances[edge.destination] = {
+            distance: newDistance,
+            path: [...distances[edge.origin].path, edge.destination]
+          }
+        }
         queue[indexInQueue] = [edge.destination, newDistance];
       }
     }
-
     return distances;
   }
 
@@ -86,7 +107,10 @@ export type Graph = Edge[];
  * Distances to each node
  */
 export interface ShortestPathTree {
-  [destination: string]: number;
+  [destination: string]: {
+    distance: number,
+    path: string[]
+  };
 }
 
 /**

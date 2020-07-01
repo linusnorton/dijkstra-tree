@@ -25,10 +25,10 @@ const result = algorithm.getTree("A");
 
 console.log(result);
 // {
-//   "A": 0,
-//   "B": 10,
-//   "C": 15,
-//   "D": 26
+//   "A": {distance: 0, path: ['A']},
+//   "B": {distance: 10, path: ['A', 'B']},
+//   "C": {distance: 15, path: ['A', 'B', 'C'],
+//   "D": {distance: 26, path: ['A', 'B', 'C', 'D']}
 // };
 
 ```
