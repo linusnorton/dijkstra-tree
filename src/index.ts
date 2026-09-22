@@ -4,61 +4,264 @@
  */
 export class DijkstraTree {
 
-  private readonly nodeEdges: NodeEdges;
+  private readonly labels: Node[] = [];
+  private readonly ids = new Map<Node, number>();
+  private readonly offsets: Int32Array;
+  private readonly targets: Int32Array;
+  private readonly weights: Float64Array;
 
   constructor(graph: Graph) {
-    this.nodeEdges = graph.reduce(this.getNodeEdges, {});
+    const origins = new Int32Array(graph.length);
+    const destinations = new Int32Array(graph.length);
+
+    for (let i = 0; i < graph.length; i++) {
+      origins[i] = this.getId(graph[i].origin);
+      destinations[i] = this.getId(graph[i].destination);
+    }
+
+    // index the edges by origin, the edges of node n are stored between offsets[n] and offsets[n + 1]
+    const numNodes = this.labels.length;
+    this.offsets = new Int32Array(numNodes + 1);
+    this.targets = new Int32Array(graph.length);
+    this.weights = new Float64Array(graph.length);
+
+    for (let i = 0; i < graph.length; i++) {
+      this.offsets[origins[i] + 1]++;
+    }
+    for (let i = 0; i < numNodes; i++) {
+      this.offsets[i + 1] += this.offsets[i];
+    }
+
+    const next = this.offsets.slice(0, numNodes);
+
+    for (let i = 0; i < graph.length; i++) {
+      const position = next[origins[i]]++;
+
+      this.targets[position] = destinations[i];
+      this.weights[position] = graph[i].distance;
+    }
   }
 
   /**
-   * Index the edges by origin
+   * Return the numeric ID of a node label, assigning one if it has not been seen before
    */
-  private getNodeEdges(nodes: NodeEdges, edge: Edge): NodeEdges {
-    nodes[edge.origin] = nodes[edge.origin] || [];
-    nodes[edge.origin].push(edge);
+  private getId(node: Node): number {
+    let id = this.ids.get(node);
 
-    return nodes;
+    if (id === undefined) {
+      id = this.labels.length;
+      this.ids.set(node, id);
+      this.labels.push(node);
+    }
+
+    return id;
   }
 
   /**
-   * Return a shortest path tree from the given node to every other node the graph. Nodes not connected by an edge will
-   * have a distance of Number.MAX_SAFE_INTEGER
+   * Return a shortest path tree from the given node to every other node in the graph
    */
   public getTree(origin: Node): ShortestPathTree {
-    // set the initial distance to each node to the maximum length
-    const distances: ShortestPathTree = {};
-    // queue of unchecked edges
-    const queue: Queue = [];
+    const numNodes = this.labels.length;
+    const distances = new Float64Array(numNodes).fill(Infinity);
+    const parents = new Int32Array(numNodes).fill(NO_PARENT);
+    const originId = this.ids.get(origin);
 
-    // set the initial distance to each node to max and add each node to the queue
-    for (const node of Object.keys(this.nodeEdges)) {
-      const distance = node === origin ? 0 : Number.MAX_SAFE_INTEGER;
-
-      queue.push([node, distance]);
-      distances[node] = distance;
+    if (originId !== undefined) {
+      distances[originId] = 0;
+      this.search(originId, distances, parents);
     }
 
-    // while we have edges left to check
-    while (queue.length > 0) {
-      // note that the sort is descending (longest first) as pop() is faster than shift()
-      queue.sort((a, b) => b[1] - a[1]);
+    return new ShortestPathTree(origin, this.labels, this.ids, distances, parents);
+  }
 
-      // take closest node off the queue
-      const [current, distance] = queue.pop() as [Node, number];
+  /**
+   * Populate the distances and parents using a binary min-heap of node IDs keyed by their current distance
+   */
+  private search(originId: number, distances: Float64Array, parents: Int32Array): void {
+    const heap = new Int32Array(this.labels.length);
+    // position of each node in the heap, UNSEEN if it has never been queued and SETTLED once it has been removed
+    const positions = new Int32Array(this.labels.length).fill(UNSEEN);
+    let size = 1;
 
-      // iterate the nodes edges
-      for (const edge of this.nodeEdges[current] || []) {
-        // see if the new distance is shorter than the one we have
-        const newDistance = Math.min(distances[edge.destination] || Number.MAX_SAFE_INTEGER, distance + edge.distance);
-        const indexInQueue = queue.findIndex(queueItem => queueItem[0] === edge.destination);
+    heap[0] = originId;
+    positions[originId] = 0;
 
-        // update the tree and the queue
-        distances[edge.destination] = newDistance;
-        queue[indexInQueue] = [edge.destination, newDistance];
+    const siftUp = (index: number) => {
+      const node = heap[index];
+      const distance = distances[node];
+
+      while (index > 0) {
+        const parentIndex = (index - 1) >> 1;
+        const parent = heap[parentIndex];
+
+        if (distances[parent] <= distance) {
+          break;
+        }
+
+        heap[index] = parent;
+        positions[parent] = index;
+        index = parentIndex;
+      }
+
+      heap[index] = node;
+      positions[node] = index;
+    };
+
+    const siftDown = (index: number) => {
+      const node = heap[index];
+      const distance = distances[node];
+
+      while (true) {
+        let childIndex = 2 * index + 1;
+
+        if (childIndex >= size) {
+          break;
+        }
+        if (childIndex + 1 < size && distances[heap[childIndex + 1]] < distances[heap[childIndex]]) {
+          childIndex++;
+        }
+        if (distances[heap[childIndex]] >= distance) {
+          break;
+        }
+
+        heap[index] = heap[childIndex];
+        positions[heap[index]] = index;
+        index = childIndex;
+      }
+
+      heap[index] = node;
+      positions[node] = index;
+    };
+
+    while (size > 0) {
+      const current = heap[0];
+      const distance = distances[current];
+
+      positions[current] = SETTLED;
+      size--;
+
+      if (size > 0) {
+        heap[0] = heap[size];
+        siftDown(0);
+      }
+
+      for (let i = this.offsets[current]; i < this.offsets[current + 1]; i++) {
+        const destination = this.targets[i];
+        const newDistance = distance + this.weights[i];
+
+        if (newDistance < distances[destination] && positions[destination] !== SETTLED) {
+          distances[destination] = newDistance;
+          parents[destination] = current;
+
+          if (positions[destination] === UNSEEN) {
+            heap[size] = destination;
+            positions[destination] = size++;
+          }
+
+          siftUp(positions[destination]);
+        }
       }
     }
+  }
 
-    return distances;
+}
+
+const UNSEEN = -1;
+const SETTLED = -2;
+const NO_PARENT = -1;
+
+/**
+ * Shortest distance to each node from the origin, and the previous node on the shortest path to it
+ */
+export class ShortestPathTree {
+
+  public readonly origin: Node;
+  private readonly labels: Node[];
+  private readonly ids: Map<Node, number>;
+  private readonly distanceById: Float64Array;
+  private readonly parentById: Int32Array;
+
+  constructor(
+    origin: Node,
+    labels: Node[],
+    ids: Map<Node, number>,
+    distanceById: Float64Array,
+    parentById: Int32Array
+  ) {
+    this.origin = origin;
+    this.labels = labels;
+    this.ids = ids;
+    this.distanceById = distanceById;
+    this.parentById = parentById;
+  }
+
+  /**
+   * Distance from the origin to the given node, Infinity if it cannot be reached
+   */
+  public distance(node: Node): number {
+    const id = this.ids.get(node);
+
+    return id === undefined ? Infinity : this.distanceById[id];
+  }
+
+  /**
+   * Previous node on the shortest path to the given node, undefined for the origin and unreachable nodes
+   */
+  public parent(node: Node): Node | undefined {
+    const id = this.ids.get(node);
+
+    return id === undefined || this.parentById[id] === NO_PARENT ? undefined : this.labels[this.parentById[id]];
+  }
+
+  /**
+   * Nodes on the shortest path from the origin to the given node inclusive, undefined if it cannot be reached
+   */
+  public path(node: Node): Node[] | undefined {
+    let id = this.ids.get(node);
+
+    if (id === undefined || this.distanceById[id] === Infinity) {
+      return undefined;
+    }
+
+    const path: Node[] = [];
+
+    for (; id !== NO_PARENT; id = this.parentById[id]) {
+      path.push(this.labels[id]);
+    }
+
+    return path.reverse();
+  }
+
+  /**
+   * Distance to every node in the graph
+   */
+  public distances(): Record<Node, number> {
+    const result: Record<Node, number> = {};
+
+    for (let i = 0; i < this.labels.length; i++) {
+      result[this.labels[i]] = this.distanceById[i];
+    }
+
+    return result;
+  }
+
+  /**
+   * Distance and parent of every node in the graph. JSON has no Infinity so unreachable nodes serialize with a
+   * distance of null
+   */
+  public toJSON(): ShortestPathTreeJSON {
+    const result: ShortestPathTreeJSON = {};
+
+    for (let i = 0; i < this.labels.length; i++) {
+      const parent = this.parentById[i];
+
+      result[this.labels[i]] = {
+        distance: this.distanceById[i],
+        parent: parent === NO_PARENT ? null : this.labels[parent]
+      };
+    }
+
+    return result;
   }
 
 }
@@ -83,20 +286,11 @@ export interface Edge {
 export type Graph = Edge[];
 
 /**
- * Distances to each node
+ * Plain object form of a ShortestPathTree
  */
-export interface ShortestPathTree {
-  [destination: string]: number;
+export interface ShortestPathTreeJSON {
+  [node: string]: {
+    distance: number;
+    parent: Node | null;
+  };
 }
-
-/**
- * Index of origin nodes and all their edges
- */
-interface NodeEdges {
-  [node: string]: Edge[];
-}
-
-/**
- * Sortable queue of Node and shortest distance to Node
- */
-type Queue = [Node, number][];
