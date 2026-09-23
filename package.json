@@ -1,6 +1,6 @@
 {
   "name": "dijkstra-tree",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Implementation of Dijkstra's algorithm that returns a shortest path tree",
   "keywords": [
     "dijkstra",
