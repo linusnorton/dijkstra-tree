@@ -54,6 +54,45 @@ The tree stores one parent pointer per node, so `path` is built on demand and co
 
 Distances must be non-negative. When there are parallel edges between two nodes, the cheapest one is used.
 
+### Integer graphs and incremental searches
+
+`IndexedDijkstra` is the search `DijkstraTree` is built on. It works on integer node IDs and edges that are already indexed by origin, and writes into buffers you own, so running a search from every node allocates nothing.
+
+```ts
+import { IndexedDijkstra } from "dijkstra-tree";
+
+// edges of node n are stored between offsets[n] and offsets[n + 1]
+const base = {
+  offsets: new Int32Array([0, 1, 2, 2]),
+  targets: new Int32Array([1, 2]),
+  weights: new Float64Array([10, 10]),
+};
+const search = new IndexedDijkstra(3, [base]);
+const distances = new Float64Array(3);
+const parents = new Int32Array(3);
+
+search.search(0, distances, parents);   // distances [0, 10, 20], parents [-1, 0, 1]
+```
+
+The graph can be made of several edge indexes over the same nodes, which is how a large base graph is combined with a few extra edges without copying it. After adding edges, `searchFrom` continues a completed search instead of starting again: lower the labels the new edges improve, pass those nodes as `dirty`, and only the nodes whose labels change are visited.
+
+```ts
+const extra = {
+  offsets: new Int32Array([0, 1, 1, 1]),
+  targets: new Int32Array([2]),
+  weights: new Float64Array([5]),
+};
+const incremental = new IndexedDijkstra(3, [base, extra]);
+
+distances[2] = 5;
+parents[2] = 0;
+
+const count = incremental.searchFrom([2], 1, distances, parents);
+incremental.settled.subarray(0, count);   // [2], the only node whose label changed
+```
+
+`settled` lists the nodes visited by the last search, so a caller keeping one set of labels per origin can put back exactly the ones a search changed. An instance reuses its internal buffers and must not be shared between concurrent searches.
+
 ### Upgrading from 0.x
 
 `getTree` used to return the distances object directly, with `Number.MAX_SAFE_INTEGER` for unreachable nodes. Use `getTree(origin).distances()` and check for `Infinity` instead. The package is now ESM; CommonJS projects can still `require` it on Node 20.19 or newer.

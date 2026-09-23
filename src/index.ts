@@ -6,9 +6,7 @@ export class DijkstraTree {
 
   private readonly labels: Node[] = [];
   private readonly ids = new Map<Node, number>();
-  private readonly offsets: Int32Array;
-  private readonly targets: Int32Array;
-  private readonly weights: Float64Array;
+  private readonly search: IndexedDijkstra;
 
   constructor(graph: Graph) {
     const origins = new Int32Array(graph.length);
@@ -21,25 +19,27 @@ export class DijkstraTree {
 
     // index the edges by origin, the edges of node n are stored between offsets[n] and offsets[n + 1]
     const numNodes = this.labels.length;
-    this.offsets = new Int32Array(numNodes + 1);
-    this.targets = new Int32Array(graph.length);
-    this.weights = new Float64Array(graph.length);
+    const offsets = new Int32Array(numNodes + 1);
+    const targets = new Int32Array(graph.length);
+    const weights = new Float64Array(graph.length);
 
     for (let i = 0; i < graph.length; i++) {
-      this.offsets[origins[i] + 1]++;
+      offsets[origins[i] + 1]++;
     }
     for (let i = 0; i < numNodes; i++) {
-      this.offsets[i + 1] += this.offsets[i];
+      offsets[i + 1] += offsets[i];
     }
 
-    const next = this.offsets.slice(0, numNodes);
+    const next = offsets.slice(0, numNodes);
 
     for (let i = 0; i < graph.length; i++) {
       const position = next[origins[i]]++;
 
-      this.targets[position] = destinations[i];
-      this.weights[position] = graph[i].distance;
+      targets[position] = destinations[i];
+      weights[position] = graph[i].distance;
     }
+
+    this.search = new IndexedDijkstra(numNodes, [{ offsets, targets, weights }]);
   }
 
   /**
@@ -67,24 +67,75 @@ export class DijkstraTree {
     const originId = this.ids.get(origin);
 
     if (originId !== undefined) {
-      distances[originId] = 0;
-      this.search(originId, distances, parents);
+      this.search.search(originId, distances, parents);
     }
 
     return new ShortestPathTree(origin, this.labels, this.ids, distances, parents);
   }
 
-  /**
-   * Populate the distances and parents using a binary min-heap of node IDs keyed by their current distance
-   */
-  private search(originId: number, distances: Float64Array, parents: Int32Array): void {
-    const heap = new Int32Array(this.labels.length);
-    // position of each node in the heap, UNSEEN if it has never been queued and SETTLED once it has been removed
-    const positions = new Int32Array(this.labels.length).fill(UNSEEN);
-    let size = 1;
+}
 
-    heap[0] = originId;
-    positions[originId] = 0;
+/**
+ * Edges indexed by origin: the edges of node n are stored between offsets[n] and offsets[n + 1] of targets and weights
+ */
+export interface EdgeIndex {
+  offsets: Int32Array | Uint32Array;
+  targets: Int32Array | Uint32Array | Uint16Array;
+  weights: Float64Array | Float32Array | Int32Array | Uint32Array;
+}
+
+/**
+ * Dijkstra's algorithm over integer node IDs, writing into buffers owned by the caller.
+ *
+ * The graph is the union of one or more edge indexes over the same nodes, so a base graph can be combined with a
+ * small set of extra edges without copying it.
+ *
+ * An instance reuses its internal buffers between calls, so it must not be shared between concurrent searches.
+ */
+export class IndexedDijkstra {
+
+  public readonly size: number;
+  private readonly edges: readonly EdgeIndex[];
+  private readonly heap: Int32Array;
+  // position of each node in the heap, UNSEEN if it has not been queued in this search and SETTLED once removed
+  private readonly positions: Int32Array;
+  private readonly settledNodes: Int32Array;
+
+  constructor(size: number, edges: readonly EdgeIndex[]) {
+    this.size = size;
+    this.edges = edges;
+    this.heap = new Int32Array(size);
+    this.positions = new Int32Array(size).fill(UNSEEN);
+    this.settledNodes = new Int32Array(size);
+  }
+
+  /**
+   * Fill distances and parents with the shortest path tree from the origin. Returns the number of nodes reached,
+   * which are listed in settlement order by `settled`
+   */
+  public search(origin: number, distances: Float64Array, parents: Int32Array): number {
+    distances.fill(Infinity);
+    parents.fill(NO_PARENT);
+    distances[origin] = 0;
+    this.settledNodes[0] = origin;
+
+    return this.searchFrom(this.settledNodes, 1, distances, parents);
+  }
+
+  /**
+   * Continue a search from existing distances and parents.
+   *
+   * The labels must describe paths that exist and every edge leaving a node that is not in `dirty` must already be
+   * relaxed. That is the state after a completed search, with the labels of `dirty` lowered by edges added since.
+   * Only nodes whose labels change are visited. Returns the number of nodes settled, which are listed in settlement
+   * order by `settled` and are exactly the nodes whose labels may differ from the ones passed in.
+   */
+  public searchFrom(dirty: ArrayLike<number>, dirtyCount: number, distances: Float64Array, parents: Int32Array): number {
+    const heap = this.heap;
+    const positions = this.positions;
+    const settled = this.settledNodes;
+    let size = 0;
+    let settledCount = 0;
 
     const siftUp = (index: number) => {
       const node = heap[index];
@@ -133,11 +184,23 @@ export class DijkstraTree {
       positions[node] = index;
     };
 
+    // dirty may be the settled buffer itself, so it is read before anything is settled
+    for (let i = 0; i < dirtyCount; i++) {
+      const node = dirty[i];
+
+      if (positions[node] === UNSEEN) {
+        heap[size] = node;
+        positions[node] = size++;
+        siftUp(size - 1);
+      }
+    }
+
     while (size > 0) {
       const current = heap[0];
       const distance = distances[current];
 
       positions[current] = SETTLED;
+      settled[settledCount++] = current;
       size--;
 
       if (size > 0) {
@@ -145,23 +208,41 @@ export class DijkstraTree {
         siftDown(0);
       }
 
-      for (let i = this.offsets[current]; i < this.offsets[current + 1]; i++) {
-        const destination = this.targets[i];
-        const newDistance = distance + this.weights[i];
+      for (let e = 0; e < this.edges.length; e++) {
+        const { offsets, targets, weights } = this.edges[e];
+        const end = offsets[current + 1];
 
-        if (newDistance < distances[destination] && positions[destination] !== SETTLED) {
-          distances[destination] = newDistance;
-          parents[destination] = current;
+        for (let i = offsets[current]; i < end; i++) {
+          const destination = targets[i];
+          const newDistance = distance + weights[i];
 
-          if (positions[destination] === UNSEEN) {
-            heap[size] = destination;
-            positions[destination] = size++;
+          if (newDistance < distances[destination] && positions[destination] !== SETTLED) {
+            distances[destination] = newDistance;
+            parents[destination] = current;
+
+            if (positions[destination] === UNSEEN) {
+              heap[size] = destination;
+              positions[destination] = size++;
+            }
+
+            siftUp(positions[destination]);
           }
-
-          siftUp(positions[destination]);
         }
       }
     }
+
+    for (let i = 0; i < settledCount; i++) {
+      positions[settled[i]] = UNSEEN;
+    }
+
+    return settledCount;
+  }
+
+  /**
+   * Nodes settled by the last search, valid up to the count it returned
+   */
+  public get settled(): Int32Array {
+    return this.settledNodes;
   }
 
 }
